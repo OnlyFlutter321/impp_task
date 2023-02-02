@@ -1,9 +1,12 @@
+import 'dart:io' as io;
 import 'dart:io';
 
-import 'package:firebase_storage/firebase_storage.dart' as firebase_storage;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart' as fs;
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:impp_task/Utils/utils.dart';
+import 'package:path/path.dart' as Path;
 
 class HomePage extends StatefulWidget {
   const HomePage({Key? key}) : super(key: key);
@@ -13,24 +16,12 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  bool loading = false;
-  // FirebaseDatabase databaseRef = FirebaseDatabase.instance;
-  File? _image;
-  final picker = ImagePicker();
-  firebase_storage.FirebaseStorage storage =
-      firebase_storage.FirebaseStorage.instance;
+  TextEditingController descriptionController = TextEditingController();
 
-  Future getGalleryImage() async {
-    final pickedFile =
-        await picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
-    setState(() {});
-    if (pickedFile != null) {
-      _image = File(pickedFile.path);
-    } else {
-      print("No Image Pick");
-      // Utils().toMessaage("No Image Picks");
-    }
-  }
+  io.File? _image;
+  final picker = ImagePicker();
+
+  fs.Reference? ref;
 
   @override
   Widget build(BuildContext context) {
@@ -38,85 +29,165 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: Text("Firebase "),
       ),
-      body: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Center(
-            child: InkWell(
-              onTap: () {
-                getGalleryImage();
-              },
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: Colors.black,
-                  ),
-                ),
-                height: 200,
-                width: 200,
-                child: _image != null
-                    ? Image.file(
-                        _image!.absolute,
-                        fit: BoxFit.cover,
-                      )
-                    : Center(
-                        child: Icon(Icons.image),
-                      ),
-              ),
+      body: SingleChildScrollView(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              height: 100,
             ),
-          ),
-          SizedBox(
-            height: 20,
-          ),
-          Container(
-            height: 30,
-            width: MediaQuery.of(context).size.width * 0.4,
-            child: Padding(
-              padding: const EdgeInsets.only(left: 20.0, right: 20),
-              child: ElevatedButton(
-                onPressed: () async {
-                  setState(() {
-                    loading = true;
-                  });
-                  firebase_storage.Reference ref = firebase_storage
-                      .FirebaseStorage.instance
-                      .ref('/foldername/' +
-                          DateTime.now().millisecondsSinceEpoch.toString());
-
-                  firebase_storage.UploadTask uploadTask =
-                      ref.putFile(_image!.absolute);
-
-                  Future.value(uploadTask).then((value) async {
-                    var newUrl = await ref.getDownloadURL();
-                    setState(() {
-                      loading = false;
-                    });
-                    Utils().toMessaage('uploaded');
-                  }).onError((error, stackTrace) {
-                    Utils().toMessaage(error.toString());
-                    setState(() {
-                      loading = false;
-                    });
-                  });
+            Center(
+              child: InkWell(
+                onTap: () {
+                  _chooseImage();
                 },
-                child: Center(
-                  child: loading
-                      ? CircularProgressIndicator(
-                          color: Colors.white,
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: Colors.black,
+                    ),
+                  ),
+                  height: 200,
+                  width: 200,
+                  child: _image != null
+                      ? Image.file(
+                          _image!.absolute,
+                          fit: BoxFit.cover,
                         )
-                      : Text(
-                          "Upload",
-                          style: TextStyle(
-                            color: Colors.red,
-                          ),
+                      : Center(
+                          child: Icon(Icons.image),
                         ),
                 ),
               ),
             ),
-          ),
-        ],
+            SizedBox(
+              height: 20,
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 20.0, right: 20),
+              child: TextFormField(
+                controller: descriptionController,
+                minLines: 2,
+                maxLines: 5,
+                keyboardType: TextInputType.multiline,
+                decoration: InputDecoration(
+                  hintText: "Enter Description",
+                  hintStyle: TextStyle(
+                    color: Colors.grey,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.all(
+                      Radius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(
+              height: 20,
+            ),
+            Container(
+              height: 30,
+              width: MediaQuery.of(context).size.width * 0.4,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 20.0, right: 20),
+                child: ElevatedButton(
+                  onPressed: () {
+                    _uploadFile();
+                  },
+                  child: Center(
+                    child: Text(
+                      "Upload",
+                      style: TextStyle(
+                        color: Colors.red,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  Future<void> _retrieveLostData(File selectedImage) async {
+    final LostData response = await picker.getLostData();
+    if (response.isEmpty) {
+      return;
+    }
+    if (response.file != null) {
+      setState(() {
+        selectedImage = File(response.file!.path);
+      });
+    } else {
+      print(response.file);
+    }
+  }
+
+  Future _uploadFile() async {
+    if (descriptionController.text.isEmpty) {
+      Fluttertoast.showToast(msg: "Please enter description");
+    } else {
+      _showMyDialog();
+      String imageUrl = "";
+      if (_image != null) {
+        imageUrl = await uploadImage();
+      }
+
+      DateTime now = DateTime.now();
+      FirebaseFirestore.instance.collection('imagesData').add({
+        "description": descriptionController.text,
+        'imgURL': imageUrl,
+        'enteredDate': now,
+        'created': now.millisecondsSinceEpoch
+      }).whenComplete(() {
+        Fluttertoast.showToast(msg: 'Data Added Successfully');
+        Navigator.of(context).pop();
+      });
+    }
+  }
+
+  Future<String> uploadImage() async {
+    ref = fs.FirebaseStorage.instance
+        .ref()
+        .child('product/${Path.basename(_image!.path)}');
+    await ref!.putFile(_image!);
+    return await ref!.getDownloadURL();
+  }
+
+  Future<void> _showMyDialog() async {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false, // user must tap button!
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('Loading'),
+          content: Row(
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(
+                width: 10,
+              ),
+              Text("Please wait...")
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  _chooseImage() async {
+    final pickedFile =
+        await picker.pickImage(source: ImageSource.gallery, imageQuality: 50);
+    print(pickedFile!.path);
+    print(pickedFile.name);
+    setState(() {
+      _image = File(pickedFile.path);
+    });
+    print(_image!.path);
+    if (pickedFile.path == null) _retrieveLostData(_image!);
   }
 }
